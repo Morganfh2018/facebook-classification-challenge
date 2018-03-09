@@ -1,0 +1,568 @@
+---
+title: 'Kaggle Competition:Facebook Recruiting IV: Human or Robot?'
+subtitle: 'An Application of Caret Packages and Ensemble & Stacking Methods'
+author: "Junyang Liu"
+date: "9/28/2017"
+output: pdf_document
+---
+
+## **Project Description**
+
+Ever wonder what it's like to work at Facebook? Facebook and Kaggle are launching an Engineering competition for 2015. Trail blaze your way to the top of the leader board to earn an opportunity at interviewing for a role as a software engineer, working on world class Machine Learning problems. 
+
+In this competition, you'll be chasing down robots for an online auction site. Human bidders on the site are becoming increasingly frustrated with their inability to win auctions vs. their software-controlled counterparts. As a result, usage from the site's core customer base is plummeting.
+
+In order to rebuild customer happiness, the site owners need to eliminate computer generated bidding from their auctions. Their attempt at building a model to identify these bids using behavioral data, including bid frequency over short periods of time, has proven insufficient. 
+
+The goal of this competition is to identify online auction bids that are placed by "robots", helping the site owners easily flag these users for removal from their site to prevent unfair auction activity. 
+
+The data in this competition comes from an online platform, not from Facebook.
+
+Please note: You must compete as an individual in recruiting competitions. You may only use the data provided to make your predictions. 
+
+## **Data Set**
+
+There are two datasets in this competition. One is a bidder dataset that includes a list of bidder information, including their id, payment account, and address. The other is a bid dataset that includes 7.6 million bids on different auctions. The bids in this dataset are all made by mobile devices.
+
+The online auction platform has a fixed increment of dollar amount for each bid, so it doesn't include an amount for each bid. You are welcome to learn the bidding behavior from the time of the bids, the auction, or the device. 
+
+The data in this competition comes from an online platform, not from Facebook.
+
+File descriptions
+
+* train.csv - the training set from the bidder dataset
+
+* test.csv - the test set from the bidder dataset
+
+* sampleSubmission.csv - a sample submission file in the correct format
+
+* bids.csv - the bid dataset
+
+#### *Data fields*
+
+###### *For the bidder dataset*
+
+* bidder_id – Unique identifier of a bidder.
+
+* payment_account – Payment account associated with a bidder. These are obfuscated to protect privacy. 
+
+* address – Mailing address of a bidder. These are obfuscated to protect privacy. 
+
+* outcome – Label of a bidder indicating whether or not it is a robot. Value 1.0 indicates a robot, where value 0.0 indicates human. 
+
+The outcome was half hand labeled, half stats-based. There are two types of "bots" with different levels of proof:
+
+1. Bidders who are identified as bots/fraudulent with clear proof. Their accounts were banned by the auction site.
+
+2. Bidder who may have just started their business/clicks or their stats exceed from system wide average. There are no clear proof that they are bots. 
+
+###### *For the bid dataset*:
+* bid_id - unique id for this bid
+
+* bidder_id – Unique identifier of a bidder (same as the bidder_id used in train.csv and test.csv)
+
+* auction – Unique identifier of an auction
+
+* merchandise –  The category of the auction site campaign, which means the bidder might come to this site by way of searching for "home goods" but ended up bidding for "sporting goods" - and that leads to this field being "home goods". This categorical field could be a search term, or online advertisement. 
+
+* device – Phone model of a visitor
+
+* time - Time that the bid is made (transformed to protect privacy).
+
+* country - The country that the IP belongs to
+
+* ip – IP address of a bidder (obfuscated to protect privacy).
+
+* url - url where the bidder was referred from (obfuscated to protect privacy). 
+
+## **Analysis**
+
+
+##### *Overview and Thought Process*
+
+   In this project, the website doesn't specify several situation and I think it is important to address those as my assumpitons going forward. 
+   
+   There are situations where a user use bots several times but not all time, you will see cases where the same user has 6000+ bids for a item but next time only has 2 bids. It indicates that a user might use bot for some bids, but maybe not using the bots all the time. In this project, since it is linked with bidder's ID, I will ignore the situations like this and I think this is consistant with the training data based on the way it sets up. 
+   
+   From the *bid* dataset, we know that this dataset is all about transactions. Therefore, if any bidder in the training set that does not have any transaction, we will consider those bidders a person, or not a robot.This assumption will be applied to the *test* dataset in my analysis as well.
+   
+   Since the *bid* dataset is transaction based dataset, meaning that it is 1 transaction per line. so it is common logic to convert this transaction based dataset to a *bidder_id* based dataset. so we can link our training set with transcation set based on *bidder_id*. 
+   
+   Before I write this report, I thought of spliting the training dataset and create my own "test" data set to see how well is my model predicting. But after actually tried it for few runs, I figured out that because there is too few examples of *"bot"* in the trainning set, if I split the data as 70-30 or 80-20, then there will be too few *"bot"* in my own "test" set. and also, because we have over 4000 obs with only 100+ *"bot"* label, I think if we split the train data, it is very eazy to run into overfitting problems.Therefore, I quit spliting the dataset and use all the *train* data as my trainning data.
+   
+##### *Set Working directory and import Data*
+```{r}
+#set wd
+setwd("/Users/kliu/Desktop/fb")
+
+#import & read three files
+bids<-read.csv("bids.csv",header = TRUE, stringsAsFactors = FALSE)
+test<-read.csv("test.csv",header = TRUE, stringsAsFactors = FALSE)
+train<-read.csv("train.csv",header = TRUE, stringsAsFactors = FALSE)
+
+#load library
+library(caret)
+library(randomForest)
+library(caret)
+library(randomForest)
+library(xgboost)
+library(mlbench)
+library(rpart)
+library(e1071)
+```
+
+##### *Feature Engineering*
+
+Since we want to transform the transaction based dataset to a *bidder_id* based dataset, I transformed the transactions into transaction summaries per bidder. Why doing this? I don't have a perticular reason, I just think that this is the way of data transformation I can think of and this is probably most common way. 
+
+here are some of my variables:
+
+* "num_bid":total number of bid placed per bidder
+
+* "num_auction": total number of auction participated per bidder
+
+* "num_merch": number of merchandise category participated per bidder
+
+* "num_device": number of device used per bidder
+
+* "min_response_time": minimun response time for a bidder,(response to a previous bid)
+
+* "mean_response_time": average response time for a bidder,(response to a previous bid)
+
+* "num_country": number of countries a bidder placed bid in
+
+* "num_ip": number of IP address a bidder used.
+
+* "num_url": number of URL a bidder used.
+
+* "bid_per_device": average number of bid placed per device for a bidder.
+
+* "bid_per_auction": average number of bid placed per auction for a bidder.
+
+* "bid_per_url": average number of bid placed per url for a bidder.
+  
+* "mean_ip": average number of ip address used by a bidder per auction.
+
+* "mean_url": average number of url used by a bidder per auction.
+
+* "max_country": the max number of country used by a bidder per auction.
+
+* "mean_device": average number of device used by a bidder per auction.
+
+* "max_bid_per_url": the max number of bids coming out of a url per auction.
+
+* "mean_bid_per_ip": the max number of bids coming out of a ip address per auction.
+
+* "mean_bid_per_country": the average number of bids places in a country by a bidder per auction.
+
+
+```{r}
+#creat a empty dataframe with correct number of columns.
+bid_stats<-data.frame(matrix(ncol=20,nrow=0))
+
+#name all columns.
+colnames(bid_stats)<-c("bidder_id", 
+                            "num_bid",
+                            "num_auction", 
+                            "num_device",
+                            "min_response_time", 
+                            "mean_response_time",
+                            "num_country", 
+                            "num_ip",
+                            "num_url",
+                            "num_time",
+                            "bid_per_device",
+                            "bid_per_auction",
+                            "bid_per_url",
+                            "mean_ip",
+                            "mean_url",
+                            "max_country",
+                            "mean_device",
+                            "max_bid_per_url",
+                            "mean_bid_per_ip",
+                            "mean_bid_per_country")
+
+#find all the bidders appeared in the transaction
+bidder<-unique(bids$bidder_id)
+
+#for each bidder, calculate all the bid summary I  mentioned above and save them into the dataframe I create. (This takes a long time to finish becuase the "for"" loop takes a long time to run. this is an object of optimization for future)
+
+for(i in (1:length(bidder))){
+  input<-bids[bids$bidder_id == bidder[i], ]
+  nbid<-aggregate(bid_id ~ bidder_id, data = input, length)
+  nt<-aggregate(time ~ bidder_id, data = input, function(x) length(unique(x)))
+  na<-aggregate(auction ~ bidder_id,data =input, function(x) length(unique(x)))
+  nd<-aggregate(device ~ bidder_id,data =input, function(x) length(unique(x)))
+  nc<-aggregate(country ~ bidder_id,data =input, function(x) length(unique(x)))
+  nip<-aggregate(ip ~ bidder_id,data =input, function(x) length(unique(x)))
+  nurl<-aggregate(url ~ bidder_id,data =input, function(x) length(unique(x)))
+  bid_pdev<-aggregate(bid_id ~ device, data = input, function(x) length(unique(x)))
+  bid_pauc<-aggregate(bid_id ~ auction, data = input, function(x) length(unique(x)))
+  bid_purl<-aggregate(bid_id ~ url, data = input, function(x) length(unique(x)))
+  bid_pip<-aggregate(bid_id ~ ip, data = input, function(x) length(unique(x)))
+  bid_pcountry<-aggregate(bid_id ~ country, data = input, function(x) length(unique(x)))
+  mean_ip<-aggregate(bid_id ~ip,data=input,FUN=length)
+  mean_url<-aggregate(bid_id ~url,data=input,FUN=length)
+  mean_country<-aggregate(bid_id ~country,data=input,FUN=length)
+  mean_device<-aggregate(bid_id ~ device,data = input,FUN = length)
+  if (length(input$time)>1){
+    min_time<-min(diff(input$time))
+    mean_time<-mean(diff(input$time))
+  }else{
+    min_time <-NA
+    mean_time <- NA
+  }
+  bid_stats[i,1]<-input$bidder_id[1]
+  bid_stats[i,2]<-nbid$bid_id
+  bid_stats[i,3]<-na$auction
+  bid_stats[i,4]<-nd$device
+  bid_stats[i,5]<-min_time
+  bid_stats[i,6]<-mean_time
+  bid_stats[i,7]<-nc$country
+  bid_stats[i,8]<-nip$ip
+  bid_stats[i,9]<-nurl$url
+  bid_stats[i,10]<-nt$time
+  bid_stats[i,11]<-mean(bid_pdev$bid_id)
+  bid_stats[i,12]<-mean(bid_pauc$bid_id)
+  bid_stats[i,13]<-mean(bid_purl$bid_id)
+  bid_stats[i,14]<-mean(mean_ip$bid_id)
+  bid_stats[i,15]<-mean(mean_url$bid_id)
+  bid_stats[i,16]<-max(mean_country$bid_id)
+  bid_stats[i,17]<-mean(mean_device$bid_id)
+  bid_stats[i,18]<-max(bid_purl$bid_id)
+  bid_stats[i,19]<-mean(bid_pip$bid_id)
+  bid_stats[i,20]<-mean(bid_pcountry$bid_id)
+}
+```
+
+Lets take a look at the distribution of those variables.
+
+```{r}
+summary(bid_stats)
+```
+
+We see most variables have a wide distribution and varies a lot, which is not bad because if the spread is correlate to the bot, then it is a good news. What I don't want to see is that variables don't vary, they have only 1 or 2 close values. It is bad because if all values are the same, it cannot be considered a differentiator for determing whether a bid is placed by a bot or human.
+
+```{r}
+cor(bid_stats[,c(2:20)])
+```
+
+I did a PCA analysis on my features and it turns out there are few features have high correlation with each other because of the way I extract them. there are some natural bonds between them that caused the high correlation. Normally, we would need to exclude some of the features but here I am not going to do so because I have done that before writting this report and the results are not so different this time. 
+
+After getting this important part of analysis, we are going to map the transactions to the correcponding bidder in the traing set (same as vlookup in Excel).
+
+```{r}
+bid_stat<-merge(train,bid_stats, by="bidder_id", all.x = TRUE)
+```
+
+From the Feature dataframe that I got from last step, there are some *NA* values and needed to be treated. So I did the following:
+
+since this is the training group and I do want to have a better train results, I split the data into two parts: One for human and the other for bot.
+
+and then I sign the averge value of that features based on whether they are *human* or *bot*. 
+
+below is the code to calculate *human* and *bot* mean response time.
+
+```{r}
+human_mean_time<-mean(bid_stat[bid_stat$outcome == 0,"mean_response_time"],na.rm = TRUE)
+
+bot_mean_time<-mean(bid_stat[bid_stat$outcome == 1,"mean_response_time"],na.rm = TRUE)
+```
+
+I did similar exercice for min_response_time. So the thought process and intuition behind this is that when a bidder only has 1 bid. then there is no average response time or minimum response time because the response time is equal to the difference between two bids. I feel uncomfortable using *0* or *NA* as their value because it doesn't make sense to me that a man who only bid once has 0 response time intuitively. so what I did is that I sign the mean value of a human to it. Why human? becuase I don't think a bot will only bid 1 time for its life time. (this points should be one of the assumptions too)
+
+```{r}
+human_min_time<-mean(bid_stat[bid_stat$outcome == 0,"min_response_time"],na.rm = TRUE)
+
+bot_min_time<-mean(bid_stat[bid_stat$outcome == 1,"min_response_time"],na.rm = TRUE)
+```
+
+After calculating all the necesssary components, I assign them into the feature dataframe.Again, I used *for* loop to do this.
+
+```{r}
+for(i in (1:nrow(bid_stat))){
+  if (is.na(bid_stat$min_response_time[i]) & bid_stat$outcome[i] == 0){
+    bid_stat$min_response_time[i]<-human_min_time
+  }
+  if (is.na(bid_stat$min_response_time[i]) & bid_stat$outcome[i] == 1){
+    bid_stat$min_response_time[i]<-bot_min_time
+  }
+  if (is.na(bid_stat$mean_response_time[i]) & bid_stat$outcome[i] == 0){
+    bid_stat$mean_response_time[i]<-human_mean_time
+  }
+  if (is.na(bid_stat$mean_response_time[i]) & bid_stat$outcome[i] == 1){
+    bid_stat$mean_response_time[i]<-bot_mean_time
+  }
+}
+```
+
+Then we need to treat the bidders that doesn't have any transactions.How to? I just ignore them as they didn't provide any information.
+
+```{r}
+bid_stat<-bid_stat[!is.na(bid_stat$num_bid),]
+```
+
+Then we change *outcome* to factors.
+
+```{r}
+bid_stat$outcome<-as.factor(bid_stat$outcome)
+levels(bid_stat$outcome)<-c("human","bot")
+```
+
+Now, lets create our *train* data frame.(easy)
+
+```{r}
+bid_stat_train<-bid_stat
+```
+
+Then we need to specify our training control conditions since we are using caret package.
+we will specify the cross validation process here. I am going to use 50 folds cross validation for my model. The cross validation process will make sure that the model we build is generalized, and hopefully, we can avoid over-fitting.
+
+```{r}
+mycontrol<-trainControl(method = "repeatedcv", number = 50,savePredictions = 'final',classProbs = TRUE)
+```
+
+##### *Model building & Prediction*
+
+Now we have our real training set *bid_stat_train* ready. Let's pass it into the prediction model. in this exercise we will use random forest as our machine learning algorithm. 
+
+Why?
+There are two reasons that I choose random forest as my algorithm:
+
+* random forest is suitable for classification problems
+
+* random forest is doing excellent job in the machine learning competition and have very high predictive accuracy in general.
+
+```{r}
+model<-train(outcome ~ num_bid
+                      +num_auction
+                      +num_device
+                      +min_response_time
+                      +mean_response_time
+                      +num_country
+                      +num_ip
+                      +num_url
+                      +num_time
+                      +bid_per_device
+                      +bid_per_auction
+                      +bid_per_url
+                      +mean_ip
+                      +mean_url
+                      +max_country
+                      +mean_device
+                      +max_bid_per_url
+                      +mean_bid_per_ip
+                      +mean_bid_per_country
+                      ,data = bid_stat_train, method = "rf", trControl=mycontrol,tuneLength = 3)
+```
+
+After building up this model, we can find out which feature that we created contribute the most to  the model. 
+
+```{r}
+print(varImp(model, scale = FALSE))
+```
+
+From the results, we find that *mean_reponse_time*, *num_bid*, *num_devices*, *num_url*, and *num_ip* are the most important features for our model. To understand this better intuitively, we could say that the bots have much smaller response time because bots are constantly monitoring bids activity.  Also, the number of bids is important because humans can only place certain number of bids in a given time. but bots can place a lot more bids. If a person what to use bots, they may also want to have more devices and use more urls at more countries to avoid detection.
+
+Anyways, We can see that the model is created. Lets see how good is it.
+
+```{r}
+model$finalModel
+```
+
+We can see that the expected error is around 3-5%, which means that the correct rate is around 94-96% for our training model. I don't know the final outcome if we use the test set to predict. bt according to our own training dataset, this is a very satisfying results. If we assume that this model doesn't have overfitting problem or other problem, the exepect accuracy for other dataset will be close to 95% as well, which is really good. However, it is likely that the accuracy level drops when we fit our model to a new dataset. 
+
+If you satisfy with your random forest results, then we can just jump to the last step and predict the *test* set and submit our results. However, I think there are something else we can do. I want to compute 2-3 different models and then ensemble them to get a better model.So that random forest model is going to be my first model.
+
+The second model is adaptive boosting model. Why? adaptive boosting model works well with binary classification problems(which is my case). It specialized on treating the misclassified predictions and try to minimize the error rate.
+
+```{r}
+model2<-train(outcome ~ num_bid
+             +num_auction
+             +num_device
+             +min_response_time
+             +mean_response_time
+             +num_country
+             +num_ip
+             +num_url
+             +num_time
+             +bid_per_device
+             +bid_per_auction
+             +bid_per_url
+             +mean_ip
+             +mean_url
+             +max_country
+             +mean_device
+             +max_bid_per_url
+             +mean_bid_per_ip
+             +mean_bid_per_country
+             ,data = bid_stat_train, method = "ada", trControl=mycontrol)
+```
+
+Let's look at the results and performance as well.
+
+```{r}
+print(varImp(model2,scale=FALSE))
+
+model2$finalModel
+```
+
+According to the results, this is also a very good model.I also tried Boosted Logistic Regression
+
+```{r}
+model3<-train(outcome ~ num_bid
+             +num_auction
+             +num_device
+             +min_response_time
+             +mean_response_time
+             +num_country
+             +num_ip
+             +num_url
+             +num_time
+             +bid_per_device
+             +bid_per_auction
+             +bid_per_url
+             +mean_ip
+             +mean_url
+             +max_country
+             +mean_device
+             +max_bid_per_url
+             +mean_bid_per_ip
+             +mean_bid_per_country
+             ,data = bid_stat_train, method = "LogitBoost", trControl=mycontrol)
+```
+
+Lets see how it performs.
+
+```{r}
+print(varImp(model3,scale=FALSE))
+
+model3$finalModel
+```
+
+After getting 3 training models. I used these 3 "weak learners" to save the predictions as a feature into the data frame
+```{r}
+bid_stat_train$model3_results<-model3$pred$bot[order(model3$pred$rowIndex)]
+bid_stat_train$model2_results<-model2$pred$bot[order(model2$pred$rowIndex)]
+bid_stat_train$model1_results<-model$pred$bot[order(model$pred$rowIndex)]
+```
+
+Then I just created a variable that contains all the features to use for later.
+
+```{r}
+predictors<-c("num_bid",
+              "num_auction",
+              "num_device",
+              "min_response_time",
+              "mean_response_time",
+              "num_country",
+              "num_ip",
+              "num_url",
+              "num_time",
+              "bid_per_device",
+              "bid_per_auction",
+              "bid_per_url",
+              "mean_ip",
+              "mean_url",
+              "max_country",
+              "mean_device",
+              "max_bid_per_url",
+              "mean_bid_per_ip",
+              "mean_bid_per_country")
+```
+
+Create the second level predictors based on the results of the weak learner
+
+```{r}
+predictor_top<-c("model1_results","model2_results","model3_results")
+```
+
+Then we build the second level model that uses the weak learner outcome as feature. this time we will use random forest and adaptive boosting.
+
+```{r}
+top_model2<-train(bid_stat_train[,train_predictor_top],bid_stat_train$outcome,method = "rf", trControl=mycontrol)
+
+top_model<-train(bid_stat_train[,train_predictor_top],bid_stat_train$outcome,method = "ada", trControl=mycontrol)
+```
+
+Lets take a look at the performance
+
+```{r}
+top_model2$finalModel
+
+top_model$finalModel
+```
+
+as we can find out, the results in the performance is neglectable. 
+
+Finally, we can use our model to predict *test* set and submit our answers to the website. we will to the similar exercise as we did before for *train* set. we will assign mean values to those bidders who doesn't have enough data.
+
+```{r}
+bid_stat_pred<-merge(test,bid_stats,by="bidder_id",all.x = TRUE)
+
+for(i in (1:nrow(bid_stat_pred))){
+  if (is.na(bid_stat_pred$min_response_time[i]) & is.na(bid_stat_pred$mean_response_time[i])){
+    bid_stat_pred$min_response_time[i]<-human_min_time
+    bid_stat_pred$mean_response_time[i]<-human_mean_time
+  }
+}
+```
+
+Then we ignored the bidders who doesn't have any data.
+
+```{r}
+bid_stat_pred<-bid_stat_pred[!is.na(bid_stat_pred$num_bid),]
+```
+
+Then we save our prediction outcome of 3 weak learner models to the *test* set as a feature
+
+```{r}
+bid_stat_pred$model1_results<-predict(model,bid_stat_pred[,predictors], type = "prob")$bot
+bid_stat_pred$model2_results<-predict(model2,bid_stat_pred[,predictors], type = "prob")$bot
+bid_stat_pred$model3_results<-predict(model3,bid_stat_pred[,predictors], type = "prob")$bot
+```
+
+Then we use two of our second level model to predict.
+
+```{r}
+pred1<-predict(top_model2, bid_stat_pred[,predictor_top],type = "prob")
+
+pred2<-predict(top_model, bid_stat_pred[,predictor_top],type = "prob")
+```
+
+Then, we average the results. why? each model might have certain bias and averaging them can cancel some of the bias and errors.
+
+```{r}
+D<-data.frame(matrix(ncol=2,nrow=0))
+for(i in (1:4630)){
+  D[i,1]<-mean(pred1[i,1],pred2[i,1])
+  D[i,2]<-mean(pred1[i,2],pred2[i,2])
+}
+```
+
+Last step is to clean up the analysis and rearrange the order of the output.
+
+```{r}
+pred<-cbind("bidder_id" = bid_stat_pred[,1],"prediction" = D[,2])
+
+results<-as.data.frame(rbind(pred,no_record_bidder),stringsAsFactors = FALSE)
+
+results$prediction<-as.numeric(results$prediction)
+
+test_order=as.data.frame(cbind("bidder_id"=test$bidder_id,"index" = row.names(test)),stringsAsFactors = FALSE)
+
+test_order$index<-as.numeric(test_order$index)
+
+results<-merge(results, test_order,by = "bidder_id",all.x = TRUE)
+
+results<-results[order(results$index),][,c(1,2)]
+
+write.csv(results, "submit.csv", row.names = FALSE)
+```
+
+Now we can submit our answer to get a score from Kaggle.
+
+## **Conclusion**
+
+From the analysis we did, I think I have much better understanding of bot auction activities and what impact would it make. I have creaeted a predictive model that will give us about 95% accuracy of detecting bots from auction. There are some limitations to my features and some operations are performed without the backup of academic knowledge. In the future, we could introduce more features, validate our process better, or maybe include more machine learning models to better tackle down this problem.
+
